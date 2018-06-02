@@ -39,8 +39,10 @@ std::vector<std::map<int, point>> S;
 // Functions
 //----------------------
 
-
-void calculateClusterMean(std::map<int, point> s, float mean_x, float mean_y)
+/*
+ * Calculates the centroid location of a given cluster
+ */
+void calculateClusterMean(std::map<int, point> s, float &mean_x, float &mean_y)
 {
 	int clusterSize = s.size();
 	float x_cm = 0.0;
@@ -95,13 +97,16 @@ float calculateCost(std::map<int, point> s)
 float evaluateDelta(point p, std::map<int, point> sn, std::map<int, point> sm)
 {
 	float x_cm_n, x_cm_m, y_cm_n, y_cm_m;
-	float centroid_n = calculateClusterMean(sn, x_cm_n, y_cm_n);
-	float centroid_m = calculateClusterMean(sn, x_cm_m, y_cm_m);
+	calculateClusterMean(sn, x_cm_n, y_cm_n);
+	calculateClusterMean(sm, x_cm_m, y_cm_m);
 
 	float distsq_n = TMath::Power(p.x - x_cm_n, 2.0) + TMath::Power(p.y - y_cm_n, 2.0);
 	float distsq_m = TMath::Power(p.x - x_cm_m, 2.0) + TMath::Power(p.y - y_cm_m, 2.0);
 
-	return (sn.size() / (sn.size() + 1)) * distsq_n - (sm.size() / (sm.size() + 1)) * distsq_m;
+	float size_n = sn.size();
+	float size_m = sm.size();
+
+	return (size_n / (size_n + 1)) * distsq_n - (size_m / (size_m + 1)) * distsq_m;
 }
 
 
@@ -163,26 +168,70 @@ void loadPoints()
 
 
 /*
+ * Transfer point in cluster 1 to cluster 2
+ */
+void transferPoint(int point_index, int clus_index1, int clus_index2)
+{
+	//Add point to cluster 2
+	S[clus_index2][point_index] = points[point_index];
+
+	//Remove from cluster 1
+	std::map<int, point>::iterator it;
+	it = S[clus_index1].find(point_index);
+	S[clus_index1].erase (it);
+}
+
+
+/*
  * Carry out Hartigan-Wong algorithm by reassigning points to
  * clusters until the function Delta is minimized
  */
 void findClusters()
 {
+	//Point index and clusters that minimize Delta
+	int minPointIndex = -999;
+	int min_clus_index_n;
+	int min_clus_index_m;
+	float minDeltaVal = 1E10;
+
 	//Loop over all existing clusters
 	for (int iclus = 0; iclus < S.size(); iclus++)
 	{
-		std::map<int, point> cluster = S[iclus];
+		std::map<int, point> cluster_n = S[iclus];
 
 		//Loop over all points in the cluster at hand
 		map <int, point> :: iterator itr;
-		for (itr = s.begin(); itr != s.end(); ++itr)
+		for (itr = cluster_n.begin(); itr != cluster_n.end(); ++itr)
 		{
 			int index = itr->first;
 			point p   = itr->second;
-			x_cm += p.x;
-			y_cm += p.y;
+
+			//Loop over all of the other clusters, trying to find a cluster 'm' that
+			//minimizes Delta along with the current cluster 'n' and point 'p'
+			//Clusters 'n' and 'm' have to be different!
+			for (int jclus = 0; jclus < S.size(); jclus++)
+			{
+				if (iclus == jclus) continue;
+
+				std::map<int, point> cluster_m = S[jclus];
+
+				//Evaluate function Delta with cluster 'n', 'm', and point 'p'
+				float deltaVal =  evaluateDelta(p, cluster_n, cluster_m);
+
+				//Does this minimize Delta?
+				if (deltaVal < minDeltaVal)
+				{
+					minDeltaVal      = deltaVal;
+					minPointIndex    = index;
+					min_clus_index_n = iclus;
+					min_clus_index_m = jclus;
+				}
+			}
 		}
 	}
+
+	//After the iteration, transfer point in cluster N that minimizes Delta to set M
+	transferPoint(minPointIndex, min_clus_index_n, min_clus_index_m);
 }
 
 
