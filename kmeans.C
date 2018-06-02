@@ -90,8 +90,19 @@ float calculateCost(std::map<int, point> s)
 
 
 /*
- *
+ * Evaluates the function Delta which should be minimized iteratively
  */
+float evaluateDelta(point p, std::map<int, point> sn, std::map<int, point> sm)
+{
+	float x_cm_n, x_cm_m, y_cm_n, y_cm_m;
+	float centroid_n = calculateClusterMean(sn, x_cm_n, y_cm_n);
+	float centroid_m = calculateClusterMean(sn, x_cm_m, y_cm_m);
+
+	float distsq_n = TMath::Power(p.x - x_cm_n, 2.0) + TMath::Power(p.y - y_cm_n, 2.0);
+	float distsq_m = TMath::Power(p.x - x_cm_m, 2.0) + TMath::Power(p.y - y_cm_m, 2.0);
+
+	return (sn.size() / (sn.size() + 1)) * distsq_n - (sm.size() / (sm.size() + 1)) * distsq_m;
+}
 
 
 /*
@@ -152,6 +163,30 @@ void loadPoints()
 
 
 /*
+ * Carry out Hartigan-Wong algorithm by reassigning points to
+ * clusters until the function Delta is minimized
+ */
+void findClusters()
+{
+	//Loop over all existing clusters
+	for (int iclus = 0; iclus < S.size(); iclus++)
+	{
+		std::map<int, point> cluster = S[iclus];
+
+		//Loop over all points in the cluster at hand
+		map <int, point> :: iterator itr;
+		for (itr = s.begin(); itr != s.end(); ++itr)
+		{
+			int index = itr->first;
+			point p   = itr->second;
+			x_cm += p.x;
+			y_cm += p.y;
+		}
+	}
+}
+
+
+/*
  * Take the points and randomly assign them to clusters
  * There must be at least as many points as there are clusters
  */
@@ -184,5 +219,8 @@ void kmeans()
 
 	//Randomly assign points to clusters
 	initializeClustersRandomly();
+
+	//Carry out actual k-means algorithm
+	findClusters();
 
 }
