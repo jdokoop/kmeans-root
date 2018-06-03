@@ -30,6 +30,11 @@ struct point {
 //Number of clusters
 const int K = 3;
 
+//Use partons or participant nucleons?
+// 0 -> Partons
+// 1 -> Nucleons
+int flagPart = 1;
+
 //Points to be clustered
 std::vector<point> points;
 
@@ -307,7 +312,66 @@ void findClusters(bool convergenceCondition)
 	//After the iteration, transfer point in cluster N that minimizes Delta to set M
 	transferPoint(minPointIndex, min_clus_index_n, min_clus_index_m);
 
+	//Recursive call
 	findClusters(allDeltaPositive);
+}
+
+
+/*
+ * Take the points and compute their centroid.
+ * Sort points by distance to the centroid and use this criterion
+ * to initialize the clusters.
+ */
+void initializeClusters()
+{
+	//Compute centroid of all points
+	float x_cm = 0;
+	float y_cm = 0;
+
+	for (int i = 0; i < points.size(); i++)
+	{
+		x_cm += points[i].x;
+		y_cm += points[i].y;
+	}
+
+	x_cm = (float) x_cm / points.size();
+	y_cm = (float) y_cm / points.size();
+
+	//Sort points by distance to the centroid
+	for (int i = 0; i < points.size(); i++)
+	{
+		float dist  = TMath::Power(x_cm - points[i].x, 2.0) + TMath::Power(y_cm - points[i].y, 2.0);
+		float dist0 = TMath::Power(x_cm - points[0].x, 2.0) + TMath::Power(y_cm - points[0].y, 2.0);
+
+		if (dist < dist0)
+		{
+			point p1 = points[0];
+			point p2 = points[i];
+
+			points[0] = p2;
+			points[i] = p1;
+		}
+	}
+
+	//Assign them to clusters based on distance from the mean
+	for (int i = 0; i < K; i++)
+	{
+		std::map<int, point> cluster;
+		S.push_back(cluster);
+	}
+
+	int ngroup = points.size() / K;
+
+	for (int i = 0; i < points.size(); i++)
+	{
+		int clus = i / ngroup;
+		if (clus > K - 1)
+		{
+			clus = i % ngroup;
+		}
+
+		S[clus][i] = points[i];
+	}
 }
 
 
@@ -338,10 +402,29 @@ void initializeClustersRandomly()
 
 
 /*
- * Plot the resulting clusters
+ * Plot and print the resulting clusters
  */
 void printClusters()
 {
+	//Print points in each cluster
+	for(int i=0; i<S.size(); i++)
+	{
+		cout << "*** CLUSTER #" << i << " ***" << endl << endl;
+
+		map <int, point> :: iterator itr;
+		for (itr = S[i].begin(); itr != S[i].end(); ++itr)
+		{
+			int index = itr->first;
+			point p   = itr->second;
+
+			cout << p.x << ", " << p.y << endl;
+		}
+
+		cout << endl;
+
+	}
+
+	//Draw clusters
 	gStyle->SetOptStat(0);
 	TH2F *h = new TH2F("h", ";x[fm];y[fm]", 100, -5, 5, 100, -5, 5);
 
@@ -366,11 +449,24 @@ void printClusters()
 
 void kmeans()
 {
-	//Initialize points and store them in a vector
-	loadPointsNucleons();
+	//Set seed for random number generator
+	srand (time(NULL));
 
-	//Randomly assign points to clusters
-	initializeClustersRandomly();
+	//Initialize points and store them in a vector
+	if(flagPart == 0)
+	{
+		loadPointsPartons();
+	}
+	else if(flagPart == 1)
+	{
+		loadPointsNucleons();
+	}
+
+	//Initialize clusters by randomly assigning points
+	//initializeClustersRandomly();
+
+	//Initialize clusters by assigning points based on the distance from the mean
+	initializeClusters();
 
 	//Carry out actual k-means algorithm
 	findClusters(false);
