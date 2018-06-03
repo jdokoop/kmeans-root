@@ -20,6 +20,7 @@
 struct point {
 	float x;
 	float y;
+	int index;
 };
 
 //----------------------
@@ -34,6 +35,9 @@ std::vector<point> points;
 
 //Array to contain all clusters
 std::vector<std::map<int, point>> S;
+
+//Colors to draw clusters
+int colors[5] = {kRed, kBlue, kGreen + 3, kOrange - 3, kViolet};
 
 //----------------------
 // Functions
@@ -66,7 +70,7 @@ void calculateClusterMean(std::map<int, point> s, float &mean_x, float &mean_y)
 
 
 /*
- * Calculate the "cost" or spread of a given cluster
+ * Calculate the "cost" or variance of a given cluster
  * phi = \sum(x-\mu)^2
  */
 float calculateCost(std::map<int, point> s)
@@ -94,8 +98,9 @@ float calculateCost(std::map<int, point> s)
 /*
  * Evaluates the function Delta which should be minimized iteratively
  */
-float evaluateDelta(point p, std::map<int, point> sn, std::map<int, point> sm)
+float evaluateDelta(point p, int point_index, std::map<int, point> sn, std::map<int, point> sm)
 {
+
 	float x_cm_n, x_cm_m, y_cm_n, y_cm_m;
 	calculateClusterMean(sn, x_cm_n, y_cm_n);
 	calculateClusterMean(sm, x_cm_m, y_cm_m);
@@ -106,7 +111,52 @@ float evaluateDelta(point p, std::map<int, point> sn, std::map<int, point> sm)
 	float size_n = sn.size();
 	float size_m = sm.size();
 
-	return (size_n / (size_n + 1)) * distsq_n - (size_m / (size_m + 1)) * distsq_m;
+	return -(size_n / (size_n + 1)) * distsq_n + (size_m / (size_m + 1)) * distsq_m;
+}
+
+
+/*
+ * Load a set of 2D points corresponding to the initial parton
+ * coordinates from AMPT after string melting
+ */
+void loadPointsPartons()
+{
+	ifstream myFileInitialInfo;
+	myFileInitialInfo.open("parton_He3Au.dat");
+
+	while (myFileInitialInfo)
+	{
+		//Read the event header
+		int nlist;
+		int iterindex;
+		int nbaryons;
+		int nmesons;
+		int nparticles;
+		int nparticleszpc;
+		int evtnumber;
+
+		myFileInitialInfo >> evtnumber >> iterindex >> nlist >> nbaryons >> nmesons >> nparticles >> nparticleszpc;
+
+		//Avoid double reading the last entry
+		if (!myFileInitialInfo) break;
+
+		//Loop over each parton in the event
+		for (int i = 0; i < nlist; i++)
+		{
+			int partid;
+			float pvec[3];
+			float mass;
+			double spacetime[4];
+
+			myFileInitialInfo >> partid >> pvec[0] >> pvec[1] >> pvec[2] >> mass >> spacetime[0] >> spacetime[1] >> spacetime[2] >> spacetime[3];
+
+			point parton;
+			parton.x = spacetime[0];
+			parton.y = spacetime[1];
+
+			points.push_back(parton);
+		}
+	}
 }
 
 
@@ -114,9 +164,9 @@ float evaluateDelta(point p, std::map<int, point> sn, std::map<int, point> sm)
  * Load a set of 2D points corresponding to the initial nucleon
  * coordinates from AMTP event record (npart-xy.dat)
  */
-void loadPoints()
+void loadPointsNucleons()
 {
-	string fname = "npart-xy.dat";
+	string fname = "partnuc_He3Au.dat";
 	ifstream infile(fname.c_str());
 
 	string line;
@@ -153,6 +203,9 @@ void loadPoints()
 				istringstream iss(line);
 				iss >> x >> y >> parentnucleus >> collcategory >> nucleonimpactparameter >> initialflavor >> finalflavor;
 
+				//if (x < 0) x = x - 20;
+				//if (x > 0) x = x + 20;
+
 				nucleon.x = x;
 				nucleon.y = y;
 
@@ -183,55 +236,78 @@ void transferPoint(int point_index, int clus_index1, int clus_index2)
 
 
 /*
- * Carry out Hartigan-Wong algorithm by reassigning points to
- * clusters until the function Delta is minimized
+ * Get the cluster to which a given point belongs
  */
-void findClusters()
+int getPointCluster(int point_index)
 {
+	for (int i = 0; i < S.size(); i++)
+	{
+		map <int, point> :: iterator itr;
+		for (itr = S[i].begin(); itr != S[i].end(); ++itr)
+		{
+			int index = itr->first;
+			if (index == point_index) return i;
+		}
+	}
+
+	return -999;
+}
+
+
+/*
+ * Carry out Hartigan-Wong algorithm by reassigning points to
+ * clusters until the function Delta is minimized.
+ * The criterion for termination is that the function Delta be
+ * positive for all points and pairs of clusters.
+ */
+void findClusters(bool convergenceCondition)
+{
+	//Condition to break out of recursion: all Delta values should be positive
+	if (convergenceCondition) return;
+
 	//Point index and clusters that minimize Delta
 	int minPointIndex = -999;
 	int min_clus_index_n;
 	int min_clus_index_m;
 	float minDeltaVal = 1E10;
 
-	//Loop over all existing clusters
-	for (int iclus = 0; iclus < S.size(); iclus++)
+	//Loop over all points
+	bool allDeltaPositive = true;
+	for (int ipoint = 0 ; ipoint < points.size(); ipoint++)
 	{
-		std::map<int, point> cluster_n = S[iclus];
+		point p = points[ipoint];
+		int iclus_n = getPointCluster(ipoint);
+		std::map<int, point> cluster_n = S[iclus_n];
 
-		//Loop over all points in the cluster at hand
-		map <int, point> :: iterator itr;
-		for (itr = cluster_n.begin(); itr != cluster_n.end(); ++itr)
+		//Loop over all clusters, trying to find a cluster 'm' that
+		//minimizes Delta along with the current cluster 'n' and point 'p'
+		for (int iclus_m = 0; iclus_m < S.size(); iclus_m++)
 		{
-			int index = itr->first;
-			point p   = itr->second;
+			if (iclus_m == iclus_n) continue;
 
-			//Loop over all of the other clusters, trying to find a cluster 'm' that
-			//minimizes Delta along with the current cluster 'n' and point 'p'
-			//Clusters 'n' and 'm' have to be different!
-			for (int jclus = 0; jclus < S.size(); jclus++)
+			std::map<int, point> cluster_m = S[iclus_m];
+			float deltaVal =  evaluateDelta(p, ipoint, cluster_n, cluster_m);
+
+			if (deltaVal < 0)
 			{
-				if (iclus == jclus) continue;
+				allDeltaPositive = false;
+			}
 
-				std::map<int, point> cluster_m = S[jclus];
-
-				//Evaluate function Delta with cluster 'n', 'm', and point 'p'
-				float deltaVal =  evaluateDelta(p, cluster_n, cluster_m);
-
-				//Does this minimize Delta?
-				if (deltaVal < minDeltaVal)
-				{
-					minDeltaVal      = deltaVal;
-					minPointIndex    = index;
-					min_clus_index_n = iclus;
-					min_clus_index_m = jclus;
-				}
+			//Does this minimize Delta?
+			if (deltaVal < minDeltaVal)
+			{
+				minDeltaVal      = deltaVal;
+				minPointIndex    = ipoint;
+				min_clus_index_n = iclus_n;
+				min_clus_index_m = iclus_m;
 			}
 		}
 	}
 
 	//After the iteration, transfer point in cluster N that minimizes Delta to set M
 	transferPoint(minPointIndex, min_clus_index_n, min_clus_index_m);
+
+	findClusters(allDeltaPositive);
 }
 
 
@@ -248,7 +324,7 @@ void initializeClustersRandomly()
 	for (int i = 0; i < K; i++)
 	{
 		std::map<int, point> cluster;
-		cluster[0] = points[i];
+		cluster[i] = points[i];
 		S.push_back(cluster);
 	}
 
@@ -261,15 +337,44 @@ void initializeClustersRandomly()
 }
 
 
+/*
+ * Plot the resulting clusters
+ */
+void printClusters()
+{
+	gStyle->SetOptStat(0);
+	TH2F *h = new TH2F("h", ";x[fm];y[fm]", 100, -5, 5, 100, -5, 5);
+
+	TCanvas *c = new TCanvas("c", "c", 600, 600);
+	h->Draw();
+
+	for (int i = 0; i < S.size(); i++)
+	{
+		map <int, point> :: iterator itr;
+		for (itr = S[i].begin(); itr != S[i].end(); ++itr)
+		{
+			int index = itr->first;
+			point p   = itr->second;
+
+			TEllipse *tell = new TEllipse(p.x, p.y, 0.09, 0.09);
+			tell->SetFillColor(colors[i]);
+			tell->Draw("same");
+		}
+	}
+}
+
+
 void kmeans()
 {
 	//Initialize points and store them in a vector
-	loadPoints();
+	loadPointsNucleons();
 
 	//Randomly assign points to clusters
 	initializeClustersRandomly();
 
 	//Carry out actual k-means algorithm
-	findClusters();
+	findClusters(false);
 
+	//Print and plot resulting clusters
+	printClusters();
 }
